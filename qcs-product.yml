@@ -1,0 +1,103 @@
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $NAME
+spec:
+  selector:
+    matchLabels:
+      app: $NAME
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: $NAME
+    spec:
+      containers:
+        - name: $NAME
+          env:
+          - name: GOOGLE_APPLICATION_CREDENTIALS
+            value: /etc/gcp/sa_credentials.json
+          volumeMounts:
+          - name: service-account-credentials-volume
+            mountPath: /etc/gcp
+            readOnly: true
+          - name: appsettings-secret
+            mountPath: /app/secrets
+            readOnly: true
+          image: $IMAGE
+          imagePullPolicy: "Always"
+          ports:
+          - containerPort: 80
+          resources:
+            limits:
+              cpu: 500m
+            requests:
+              cpu: 200m
+      volumes:
+      - name: service-account-credentials-volume
+        secret:
+          secretName: $ENV-service-account-credentials
+          items:
+          - key: sa_json
+            path: sa_credentials.json
+      - name: appsettings-secret
+        secret:
+          secretName: $NAME-appsettings-secret
+
+--- 
+
+kind: Service
+apiVersion: v1
+metadata:
+  name: $NAME
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: NodePort
+  selector:
+    app: $NAME
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-egress
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 192.168.212.0/24
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: $NAME
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: $NAME
+  minReplicas: 1  
+  maxReplicas: 5  
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
